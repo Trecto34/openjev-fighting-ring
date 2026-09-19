@@ -125,10 +125,21 @@ CHESS_HTML = """<!DOCTYPE html>
     cursor: default; position: relative;
   }
   .cell.light { background: #141d31; }
-  .cell.dark  { background: #0b1424; }
-  .cell .piece { text-shadow: 0 0 6px currentColor; }
-  .cell.pw .piece { color: var(--side-white); filter: drop-shadow(0 0 4px rgba(0, 240, 255, 0.55)); }
-  .cell.pb .piece { color: var(--side-black); filter: drop-shadow(0 0 4px rgba(168, 85, 247, 0.6)); }
+  .cell .piece, .cell span {
+    font-size: clamp(22px, 5.2vmin, 44px); line-height: 1;
+    display: inline-block; user-select: none;
+    transition: transform 0.15s ease, filter 0.15s ease;
+  }
+  .cell.pw .piece, .cell.pw span {
+    color: #00f0ff !important;
+    text-shadow: 0 0 12px rgba(0, 240, 255, 0.8), 0 0 2px #ffffff;
+    filter: drop-shadow(0 0 6px rgba(0, 240, 255, 0.85));
+  }
+  .cell.pb .piece, .cell.pb span {
+    color: #d946ef !important;
+    text-shadow: 0 0 12px rgba(217, 70, 239, 0.9), 0 0 2px #ffffff;
+    filter: drop-shadow(0 0 6px rgba(217, 70, 239, 0.85));
+  }
   .cell.lastw { box-shadow: inset 0 0 0 2px rgba(0, 240, 255, 0.85), inset 0 0 14px rgba(0, 240, 255, 0.35); }
   .cell.lastb { box-shadow: inset 0 0 0 2px rgba(192, 132, 252, 0.85), inset 0 0 14px rgba(168, 85, 247, 0.35); }
   .cell.check { animation: checkPulse 1.1s ease-in-out infinite; }
@@ -359,7 +370,10 @@ CHESS_HTML = """<!DOCTYPE html>
 </div>
 
 <script>
-const GLYPH = {P:'♟',N:'♞',B:'♝',R:'♜',Q:'♛',K:'♚',p:'♟',n:'♞',b:'♝',r:'♜',q:'♛',k:'♚'};
+const GLYPH = {
+  P:'♙', N:'♘', B:'♗', R:'♖', Q:'♕', K:'♔',
+  p:'♟', n:'♞', b:'♝', r:'♜', q:'♛', k:'♚'
+};
 let running = false;
 let renderedPlies = -1;
 let overlayDismissed = false;
@@ -379,6 +393,7 @@ function buildBoard() {
       cell.className = 'cell ' + (((r + c) % 2 === 0) ? 'light' : 'dark');
       cell.dataset.r = r; cell.dataset.c = c;
       const p = document.createElement('span');
+      p.className = 'piece';
       cell.appendChild(p);
       grid.appendChild(cell);
       cells.push(cell);
