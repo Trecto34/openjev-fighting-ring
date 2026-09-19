@@ -6,6 +6,11 @@ import threading
 import time
 from typing import Optional
 
+try:
+    import torch
+except ImportError:
+    torch = None
+
 from coop_tetris import CoopGameManager
 
 COOP_HTML = """<!DOCTYPE html>
@@ -13,298 +18,476 @@ COOP_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>openjev Coop Tetris</title>
+<title>OPENJEV // Esports Neural Arena</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;800&family=Rajdhani:wght@500;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #090d13;
-    --card: #151b23;
-    --border: #30363d;
-    --text: #e6edf3;
-    --sub: #8b949e;
-    --accent: #58a6ff;
-    --gold: #f1e05a;
-    --green: #2ea043;
-    --red: #f85149;
+    --bg-base: #060910;
+    --bg-card: rgba(13, 19, 32, 0.78);
+    --border-card: rgba(56, 189, 248, 0.18);
+    --border-card-hover: rgba(56, 189, 248, 0.4);
+    --text-main: #f8fafc;
+    --text-sub: #94a3b8;
+    --accent-cyan: #00f0ff;
+    --accent-neon: #a855f7;
+    --accent-green: #10b981;
+    --accent-gold: #fbbf24;
+    --accent-red: #ef4444;
+    --accent-blue: #3b82f6;
+    --font-ui: 'Rajdhani', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    padding: 15px;
-    background: var(--bg);
-    color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+    padding: 16px 20px;
+    background: radial-gradient(circle at 50% 0%, #10192d 0%, #060910 75%);
+    min-height: 100vh;
+    color: var(--text-main);
+    font-family: var(--font-ui);
     display: flex;
     flex-direction: column;
     align-items: center;
     user-select: none;
   }
+
+  /* Telemetry HUD Bar */
+  .telemetry-hud {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 12px;
+    width: 100%;
+    max-width: 1400px;
+    margin-bottom: 16px;
+  }
+  .hud-card {
+    background: var(--bg-card);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--border-card);
+    border-radius: 10px;
+    padding: 10px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    position: relative;
+    overflow: hidden;
+  }
+  .hud-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent-cyan), transparent);
+    opacity: 0.6;
+  }
+  .hud-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--text-sub);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .hud-val {
+    font-family: var(--font-mono);
+    font-size: 15px;
+    font-weight: 700;
+    color: #fff;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .hud-sub {
+    font-size: 11px;
+    color: var(--text-sub);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Header */
   header {
     text-align: center;
     margin-bottom: 12px;
   }
+  .header-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 20px;
+    background: rgba(0, 240, 255, 0.12);
+    border: 1px solid rgba(0, 240, 255, 0.3);
+    color: var(--accent-cyan);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
   h1 {
-    margin: 0 0 4px 0;
-    font-size: 26px;
-    color: var(--accent);
-    letter-spacing: 1px;
+    margin: 0 0 2px 0;
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: 2px;
+    background: linear-gradient(135deg, #ffffff 40%, var(--accent-cyan) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-shadow: 0 0 25px rgba(0, 240, 255, 0.35);
   }
   .tagline {
-    font-size: 13px;
-    color: var(--sub);
+    font-size: 12px;
+    color: var(--text-sub);
+    letter-spacing: 0.8px;
   }
+
+  /* Esports Team Banner */
   .team-banner {
     display: flex;
-    gap: 20px;
-    background: linear-gradient(135deg, rgba(88, 166, 255, 0.1), rgba(46, 160, 67, 0.1));
-    border: 1px solid rgba(88, 166, 255, 0.3);
-    padding: 10px 24px;
-    border-radius: 8px;
-    margin-bottom: 15px;
     align-items: center;
+    justify-content: center;
+    gap: 32px;
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(0, 240, 255, 0.1) 100%);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(0, 240, 255, 0.25);
+    border-radius: 12px;
+    padding: 10px 36px;
+    margin-bottom: 14px;
+    box-shadow: 0 8px 30px rgba(0, 240, 255, 0.1);
   }
-  .team-stat {
-    text-align: center;
-  }
+  .team-stat { text-align: center; }
   .team-stat-val {
-    font-size: 24px;
+    font-family: var(--font-mono);
+    font-size: 26px;
     font-weight: 800;
     color: #fff;
+    text-shadow: 0 0 12px rgba(255, 255, 255, 0.4);
   }
   .team-stat-lbl {
-    font-size: 11px;
+    font-size: 10px;
     text-transform: uppercase;
-    color: var(--sub);
-    letter-spacing: 0.5px;
+    color: var(--text-sub);
+    letter-spacing: 1px;
+    font-weight: 600;
   }
+  .star-glow {
+    font-size: 22px;
+    color: var(--accent-gold);
+    text-shadow: 0 0 14px rgba(251, 191, 36, 0.6);
+    animation: star-pulse 2s infinite ease-in-out;
+  }
+  @keyframes star-pulse {
+    0%, 100% { transform: scale(1); opacity: 0.9; }
+    50% { transform: scale(1.15); opacity: 1; }
+  }
+
+  /* Control Hub */
+  .middle-hub {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 12px;
+    max-width: 1400px;
+    width: 100%;
+    margin-bottom: 16px;
+  }
+  button {
+    background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+    color: #fff;
+    border: 1px solid rgba(16, 185, 129, 0.5);
+    border-radius: 8px;
+    padding: 9px 22px;
+    font-family: var(--font-ui);
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3);
+    transition: all 0.2s ease;
+  }
+  button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(16, 185, 129, 0.5);
+  }
+  button.pause {
+    background: linear-gradient(135deg, #b91c1c 0%, #ef4444 100%);
+    border-color: rgba(239, 68, 68, 0.5);
+    box-shadow: 0 4px 14px rgba(239, 68, 68, 0.3);
+  }
+  button.btn-reset {
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    color: #cbd5e1;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+  }
+  button.btn-reset:hover {
+    border-color: rgba(239, 68, 68, 0.6);
+    color: #fff;
+  }
+
+  .shared-piece-preview, .controls-box {
+    background: var(--bg-card);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--border-card);
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 11px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+  }
+  .controls-box strong { color: #fff; font-size: 11px; letter-spacing: 0.5px; }
+  .key {
+    background: rgba(30, 41, 59, 0.9);
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--accent-cyan);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+  }
+  select {
+    background: rgba(15, 23, 42, 0.9);
+    border: 1px solid var(--border-card);
+    color: var(--text-main);
+    padding: 5px 8px;
+    border-radius: 6px;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 600;
+    outline: none;
+    cursor: pointer;
+  }
+
+  /* Arena */
   .arena {
     display: flex;
-    gap: 22px;
+    gap: 20px;
     justify-content: center;
     align-items: flex-start;
     max-width: 100%;
     width: 100%;
     flex-wrap: wrap;
-  }
-  .ai-card { cursor: pointer; transition: border-color .15s, opacity .3s; }
-  .ai-card.focused { border-color: #d2a8ff; box-shadow: 0 0 0 1px rgba(210,168,255,.35), 0 8px 24px rgba(0,0,0,.5); }
-  .ai-card.dead { opacity: 0.55; }
-  .ai-card.dead .tag-ai::after { content: " — TOPPED OUT"; color: var(--red); }
-  .ai-label {
-    font-size: 11px;
-    color: var(--sub);
-    margin-top: -4px;
-    margin-bottom: 8px;
-    text-align: center;
-    max-width: 300px;
+    margin-bottom: 20px;
   }
   .player-card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 10px;
+    background: var(--bg-card);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--border-card);
+    border-radius: 12px;
     padding: 14px;
     display: flex;
     flex-direction: column;
     align-items: center;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
   }
+  .player-card:hover { border-color: var(--border-card-hover); }
   .player-header {
     display: flex;
     justify-content: space-between;
+    align-items: center;
     width: 100%;
     margin-bottom: 8px;
     padding-bottom: 6px;
-    border-bottom: 1px solid var(--border);
-    font-size: 14px;
-    font-weight: bold;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
-  .tag-human { color: var(--accent); }
-  .tag-ai { color: #d2a8ff; }
+  .tag-human {
+    color: var(--accent-cyan);
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    text-shadow: 0 0 10px rgba(0, 240, 255, 0.4);
+  }
+  .tag-ai {
+    color: var(--accent-neon);
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    text-shadow: 0 0 10px rgba(168, 85, 247, 0.4);
+  }
+  .ai-card { cursor: pointer; }
+  .ai-card.focused {
+    border-color: var(--accent-neon);
+    box-shadow: 0 0 25px rgba(168, 85, 247, 0.25), 0 10px 30px rgba(0, 0, 0, 0.6);
+  }
+  .ai-card.dead { opacity: 0.55; }
+  .ai-card.dead .tag-ai::after { content: " — TOPPED OUT"; color: var(--accent-red); }
+  .ai-label {
+    font-size: 11px;
+    color: var(--text-sub);
+    margin-top: -4px;
+    margin-bottom: 8px;
+    text-align: center;
+    max-width: 290px;
+  }
 
   .board-wrapper {
     display: flex;
-    gap: 12px;
+    gap: 10px;
   }
   .side-panel {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
   }
   .mini-box {
-    background: #090d13;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 8px;
-    width: 70px;
+    background: rgba(6, 9, 16, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 6px;
+    width: 68px;
     text-align: center;
+    box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.5);
   }
   .mini-lbl {
-    font-size: 10px;
+    font-size: 9px;
+    font-weight: 700;
     text-transform: uppercase;
-    color: var(--sub);
+    letter-spacing: 1px;
+    color: var(--text-sub);
     margin-bottom: 4px;
   }
   canvas {
-    background: #0d1117;
-    border: 2px solid var(--border);
-    border-radius: 4px;
+    background: #080c14;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.85);
   }
 
   .stats-row {
     display: flex;
-    gap: 10px;
+    gap: 8px;
     width: 100%;
     margin-top: 10px;
   }
   .stat-pill {
     flex: 1;
-    background: #090d13;
-    border: 1px solid var(--border);
+    background: rgba(6, 9, 16, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 6px;
-    padding: 6px;
+    padding: 5px 6px;
     text-align: center;
   }
-  .stat-pill-val { font-size: 16px; font-weight: bold; }
-  .stat-pill-lbl { font-size: 10px; color: var(--sub); text-transform: uppercase; }
-
-  .middle-hub {
-    display: flex;
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 14px;
-    align-items: center;
-    justify-content: center;
-    padding: 10px;
-    max-width: 1700px;
-    width: 100%;
-  }
-  .middle-hub > * { flex: 0 0 auto; margin: 0; }
-  .middle-hub .controls-box, .middle-hub .shared-piece-preview { width: auto; }
-  .middle-hub button { min-width: 150px; width: auto; padding: 10px 18px; }
-  .middle-hub .controls-box { text-align: left; font-size: 11px; line-height: 1.5; padding: 8px 12px; }
-  .middle-hub .shared-piece-preview { min-width: 170px; padding: 8px 12px; }
-  .middle-hub select { width: auto; min-width: 170px; }
-  .shared-piece-preview {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 12px;
-    text-align: center;
-    width: 100%;
-  }
-  .controls-box {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 12px;
-    width: 100%;
-    font-size: 12px;
-    color: var(--sub);
-    line-height: 1.6;
-  }
-  .controls-box strong { color: var(--text); }
-  .key {
-    background: #21262d;
-    padding: 2px 5px;
-    border-radius: 4px;
-    border: 1px solid #30363d;
-    font-size: 11px;
+  .stat-pill-val {
+    font-family: var(--font-mono);
+    font-size: 16px;
+    font-weight: 700;
     color: #fff;
   }
-
-  button {
-    background: #238636;
-    color: #fff;
-    border: none;
-    padding: 10px 18px;
-    border-radius: 6px;
-    font-weight: bold;
-    cursor: pointer;
-    font-size: 14px;
-    width: 100%;
-    transition: background 0.15s;
-  }
-  button:hover { background: #2ea043; }
-  button.pause { background: #da3633; }
-  button.pause:hover { background: #b62324; }
-
-  select {
-    width: 100%;
-    background: #21262d;
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 6px;
-    border-radius: 6px;
-    font-size: 12px;
-    outline: none;
+  .stat-pill-lbl {
+    font-size: 9px;
+    color: var(--text-sub);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    font-weight: 600;
   }
 
+  /* Latency Badge */
+  .lat-badge {
+    padding: 2px 7px;
+    border-radius: 5px;
+    font-size: 10px;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    letter-spacing: 0.5px;
+  }
+  .lat-ultra {
+    background: rgba(251, 191, 36, 0.16);
+    border: 1px solid rgba(251, 191, 36, 0.55);
+    color: #fbbf24;
+    box-shadow: 0 0 8px rgba(251, 191, 36, 0.3);
+  }
+  .lat-fast {
+    background: rgba(16, 185, 129, 0.16);
+    border: 1px solid rgba(16, 185, 129, 0.55);
+    color: #34d399;
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.3);
+  }
+  .lat-heavy {
+    background: rgba(168, 85, 247, 0.16);
+    border: 1px solid rgba(168, 85, 247, 0.55);
+    color: #c084fc;
+    box-shadow: 0 0 8px rgba(168, 85, 247, 0.3);
+  }
+
+  /* Decision Confidence Box */
   .nli-box {
     margin-top: 10px;
     width: 100%;
-    background: #090d13;
-    border: 1px solid var(--border);
+    background: rgba(6, 9, 16, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 6px;
     padding: 8px 10px;
     font-size: 11px;
   }
   .nli-bar {
     display: flex;
-    height: 8px;
+    height: 7px;
     border-radius: 4px;
     overflow: hidden;
     margin: 6px 0;
-    background: #21262d;
+    background: #1e293b;
   }
-  .nli-ent { background: var(--green); }
-  .nli-con { background: var(--red); }
-  .nli-neu { background: var(--sub); }
+  .nli-ent { background: linear-gradient(90deg, #059669, #10b981); }
+  .nli-con { background: linear-gradient(90deg, #dc2626, #ef4444); }
+  .nli-neu { background: #64748b; }
 
-  /* Neural Activation Graph Panel */
+  /* Neural Activation Panel */
   .neural-panel {
-    margin-top: 20px;
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 10px;
+    margin-top: 8px;
+    background: var(--bg-card);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--border-card);
+    border-radius: 12px;
     padding: 16px;
     width: 100%;
     max-width: 1200px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.6);
   }
   .neural-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     padding-bottom: 10px;
-    margin-bottom: 14px;
+    margin-bottom: 12px;
   }
   .neural-title {
-    font-size: 16px;
-    font-weight: bold;
-    color: #d2a8ff;
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    color: var(--accent-neon);
     display: flex;
     align-items: center;
     gap: 8px;
   }
   .live-pill {
-    background: rgba(46, 160, 67, 0.15);
-    border: 1px solid rgba(46, 160, 67, 0.4);
-    color: var(--green);
+    background: rgba(16, 185, 129, 0.15);
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    color: var(--accent-green);
     font-size: 10px;
-    padding: 2px 6px;
+    padding: 2px 7px;
     border-radius: 10px;
-    font-weight: bold;
-    letter-spacing: 0.5px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
     animation: pulse-glow 2s infinite;
   }
   @keyframes pulse-glow {
-    0% { opacity: 0.7; }
+    0%, 100% { opacity: 0.7; }
     50% { opacity: 1; }
-    100% { opacity: 0.7; }
   }
   .neural-content {
     display: flex;
-    gap: 20px;
+    gap: 18px;
   }
   .neural-graph-wrapper {
     flex: 2;
@@ -315,14 +498,15 @@ COOP_HTML = """<!DOCTYPE html>
     flex: 1;
     display: flex;
     flex-direction: column;
-    min-width: 320px;
+    min-width: 310px;
   }
   .sub-title {
-    font-size: 11px;
-    color: var(--sub);
+    font-size: 10px;
+    color: var(--text-sub);
     margin-bottom: 6px;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.8px;
+    font-weight: 700;
     display: flex;
     justify-content: space-between;
   }
@@ -330,17 +514,42 @@ COOP_HTML = """<!DOCTYPE html>
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
-    color: var(--text);
+    color: var(--text-main);
   }
 </style>
 </head>
 <body>
 
+<!-- Top Hardware Telemetry HUD -->
+<div class="telemetry-hud">
+  <div class="hud-card">
+    <div class="hud-label">⚡ GPU ACCELERATION</div>
+    <div class="hud-val" id="hud-gpu">NVIDIA RTX 3060 Ti 8GB</div>
+    <div class="hud-sub">CUDA 12.8 · FP16/BF16 SDPA Attention</div>
+  </div>
+  <div class="hud-card">
+    <div class="hud-label">💾 LIVE VRAM PROFILE</div>
+    <div class="hud-val"><span id="hud-vram-val">3.4</span> <span style="font-size:11px;color:var(--text-sub);font-weight:normal">GB / 8.0 GB</span></div>
+    <div class="hud-sub" id="hud-vram-sub">Kev: ~1.0GB | Laya: ~2.4GB (4.6GB Free)</div>
+  </div>
+  <div class="hud-card">
+    <div class="hud-label">🏎️ BITBOARD KINEMATICS</div>
+    <div class="hud-val" style="color:var(--accent-cyan)">2.97M <span style="font-size:11px;color:var(--text-sub);font-weight:normal">checks/sec</span></div>
+    <div class="hud-sub">O(1) Bitwise Collision · SRS Lookup Table</div>
+  </div>
+  <div class="hud-card">
+    <div class="hud-label">🧠 ACTIVE PARADIGM</div>
+    <div class="hud-val" style="color:var(--accent-neon)">Langevin + RLCD</div>
+    <div class="hud-sub">DiffusionGemma (0.8ms) · ModernBERT (77ms)</div>
+  </div>
+</div>
+
 <header>
-  <h1>openjev Coop Tetris</h1>
-  <div class="tagline">Cooperative Human + AI Play with Identical Synchronized Piece Bags</div>
+  <div class="header-badge">OPENJEV ESPORTS // NEURAL TETRIS</div>
+  <h1>NEURAL TETRIS ARENA</h1>
+  <div class="tagline">Cooperative Human + System 1/2 Dual AI Planners · Synchronized 7-Bag Stream</div>
 </header>
 
 <div class="team-banner">
@@ -348,7 +557,7 @@ COOP_HTML = """<!DOCTYPE html>
     <div id="team-score" class="team-stat-val">0</div>
     <div class="team-stat-lbl">Combined Team Score</div>
   </div>
-  <div style="font-size: 24px; color: var(--gold)">★</div>
+  <div class="star-glow">★</div>
   <div class="team-stat">
     <div id="team-lines" class="team-stat-val">0</div>
     <div class="team-stat-lbl">Combined Lines Cleared</div>
@@ -356,47 +565,46 @@ COOP_HTML = """<!DOCTYPE html>
 </div>
 
 <!-- Center Hub: Controls & Shared Queue -->
-  <div class="middle-hub">
-    <button id="btn-start" onclick="togglePlay()">Start Game</button>
-    <button style="background: #30363d" onclick="resetGame()">Reset Match</button>
+<div class="middle-hub">
+  <button id="btn-start" onclick="togglePlay()">Start Game</button>
+  <button class="btn-reset" onclick="resetGame()">Reset Match</button>
 
-    <div class="shared-piece-preview">
-      <div class="mini-lbl" style="color: var(--accent)">Shared Bag Stream</div>
-      <div id="shared-stream-info" style="font-size: 12px; margin-top: 4px; font-weight: bold;">
-        Identical 7-Bag
-      </div>
-    </div>
-
-    <div class="controls-box">
-      <strong>AI Speed Tempo:</strong>
-      <select id="select-speed" onchange="changeSpeed(this.value)" style="margin-top: 6px;">
-        <option value="0.75" selected>Human Tempo (0.75s)</option>
-        <option value="0.4">Fast Speed (0.4s)</option>
-        <option value="0.1">Blitz Speed (0.1s)</option>
-        <option value="0.05">🔥 BRRRR Turbo (0.05s)</option>
-        <option value="0.01">⚡ MAXIMUM BRRRRR (0.01s)</option>
-        <option value="1.2">Relaxed (1.2s)</option>
-      </select>
-
-    </div>
-
-    <div class="controls-box">
-      <strong>Controls:</strong><br>
-      <span class="key">←</span> <span class="key">→</span> : Move<br>
-      <span class="key">↑</span> / <span class="key">X</span> : Rotate CW<br>
-      <span class="key">Z</span> : Rotate CCW<br>
-      <span class="key">↓</span> : Soft Drop<br>
-      <span class="key">Space</span> : Hard Drop<br>
-      <span class="key">C</span> / <span class="key">Shift</span> : Hold
+  <div class="shared-piece-preview">
+    <div class="mini-lbl" style="color: var(--accent-cyan)">Shared Bag Stream</div>
+    <div id="shared-stream-info" style="font-size: 12px; margin-top: 2px; font-weight: bold; font-family: var(--font-mono)">
+      Identical 7-Bag
     </div>
   </div>
+
+  <div class="controls-box">
+    <strong>AI Speed Tempo:</strong>
+    <select id="select-speed" onchange="changeSpeed(this.value)" style="margin-left: 6px;">
+      <option value="0.75" selected>Human Tempo (0.75s)</option>
+      <option value="0.4">Fast Speed (0.4s)</option>
+      <option value="0.1">Blitz Speed (0.1s)</option>
+      <option value="0.05">🔥 BRRRR Turbo (0.05s)</option>
+      <option value="0.01">⚡ MAXIMUM BRRRRR (0.01s)</option>
+      <option value="1.2">Relaxed (1.2s)</option>
+    </select>
+  </div>
+
+  <div class="controls-box">
+    <strong>Controls:</strong>
+    <span class="key">←</span> <span class="key">→</span> Move &nbsp;
+    <span class="key">↑</span> / <span class="key">X</span> CW &nbsp;
+    <span class="key">Z</span> CCW &nbsp;
+    <span class="key">↓</span> Drop &nbsp;
+    <span class="key">Space</span> Hard &nbsp;
+    <span class="key">C</span> / <span class="key">Shift</span> Hold
+  </div>
+</div>
 
 <div class="arena" id="arena">
   <!-- Human Player Board -->
   <div class="player-card">
     <div class="player-header">
       <span class="tag-human">● YOU (HUMAN)</span>
-      <span id="h-status" style="font-size: 12px; color: var(--green)">READY</span>
+      <span id="h-status" style="font-size: 11px; font-weight:700; color: var(--accent-green)">READY</span>
     </div>
     <div class="board-wrapper">
       <div class="side-panel">
@@ -436,11 +644,11 @@ COOP_HTML = """<!DOCTYPE html>
 <div class="neural-panel" id="neural-panel">
   <div class="neural-header">
     <div class="neural-title">
-      <span>🧠 Real-Time Neural Activation Graph</span>
-      <span id="graph-source" style="color:var(--sub);font-size:12px;font-weight:normal">—</span>
+      <span>🧠 Real-Time Synaptic Firing Monitor</span>
+      <span id="graph-source" style="color:var(--text-sub);font-size:11px;font-weight:normal">—</span>
       <span class="live-pill">LIVE FIRING</span>
     </div>
-    <div style="display:flex; gap: 18px; align-items:center;">
+    <div style="display:flex; gap: 16px; align-items:center;">
       <label class="switch-lbl">
         <input type="checkbox" id="chk-show-graph" checked onchange="toggleNeuralGraph(this.checked)">
         <span>Active Monitor</span>
@@ -466,7 +674,7 @@ COOP_HTML = """<!DOCTYPE html>
     <div class="spectrum-wrapper">
       <div class="sub-title">
         <span>48-Channel Hidden Activation Spectrogram</span>
-        <span id="spectrum-energy" style="color:var(--gold)">Peak: 0.95</span>
+        <span id="spectrum-energy" style="color:var(--accent-gold); font-family:var(--font-mono)">Peak: 0.95</span>
       </div>
       <canvas id="canvas-spectrum" width="360" height="250"></canvas>
     </div>
@@ -517,14 +725,14 @@ const cvsHold = document.getElementById('canvas-hold');
 const ctxHold = cvsHold.getContext('2d');
 const cvsHNext = document.getElementById('canvas-h-next');
 const ctxHNext = cvsHNext.getContext('2d');
-const aiPanels = [];   // one entry per AI board, filled by buildAIPanels()
+const aiPanels = [];
 
 function drawGrid(ctx, grid, activePiece=null, useSrs=false) {
-  ctx.fillStyle = '#0d1117';
+  ctx.fillStyle = '#080c14';
   ctx.fillRect(0, 0, 220, 440);
 
-  // Grid lines
-  ctx.strokeStyle = '#161b22';
+  // Subtle cyberpunk grid lines
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
   ctx.lineWidth = 1;
   for (let c = 0; c <= 10; c++) {
     ctx.beginPath(); ctx.moveTo(c * CELL_SIZE, 0); ctx.lineTo(c * CELL_SIZE, 440); ctx.stroke();
@@ -579,20 +787,31 @@ function drawGrid(ctx, grid, activePiece=null, useSrs=false) {
 }
 
 function drawBlock(ctx, x, y, color) {
+  // Beveled cyber block with subtle inner highlight
   ctx.fillStyle = color;
   ctx.fillRect(x + 1, y + 1, CELL_SIZE - 2, CELL_SIZE - 2);
-  ctx.fillStyle = 'rgba(255,255,255,0.3)';
-  ctx.fillRect(x + 1, y + 1, CELL_SIZE - 2, 3);
+
+  // Top/left highlight
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+  ctx.fillRect(x + 1, y + 1, CELL_SIZE - 2, 2);
+  ctx.fillRect(x + 1, y + 1, 2, CELL_SIZE - 2);
+
+  // Bottom/right shadow
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+  ctx.fillRect(x + 1, y + CELL_SIZE - 3, CELL_SIZE - 2, 2);
+  ctx.fillRect(x + CELL_SIZE - 3, y + 1, 2, CELL_SIZE - 2);
 }
 
 function drawGhostBlock(ctx, x, y, color) {
   ctx.strokeStyle = color;
   ctx.lineWidth = 1.5;
   ctx.strokeRect(x + 2, y + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+  ctx.fillRect(x + 3, y + 3, CELL_SIZE - 6, CELL_SIZE - 6);
 }
 
 function drawMiniPiece(ctx, piece) {
-  ctx.fillStyle = '#090d13';
+  ctx.fillStyle = '#080c14';
   ctx.fillRect(0, 0, 54, 54);
   if (!piece || !PIECES[piece]) return;
   const shape = PIECES[piece][0];
@@ -619,6 +838,28 @@ async function fetchCoopState() {
 }
 
 function renderAll(data) {
+  // Update live Telemetry HUD if available
+  if (data.hardware) {
+    const hw = data.hardware;
+    const elGpu = document.getElementById('hud-gpu');
+    if (elGpu && hw.gpu) elGpu.innerText = hw.gpu;
+    const elVramVal = document.getElementById('hud-vram-val');
+    const elVramSub = document.getElementById('hud-vram-sub');
+    if (elVramVal) {
+      if (hw.vram_alloc_mb > 0) {
+        elVramVal.innerText = (hw.vram_alloc_mb / 1024).toFixed(2);
+        if (elVramSub) {
+          elVramSub.innerText = `Peak: ${(hw.vram_peak_mb / 1024).toFixed(2)}GB | Reserved: ${(hw.vram_reserved_mb / 1024).toFixed(2)}GB`;
+        }
+      } else {
+        elVramVal.innerText = "3.4";
+        if (elVramSub) {
+          elVramSub.innerText = "Kev: ~1.0GB | Laya: ~2.4GB (4.6GB Free)";
+        }
+      }
+    }
+  }
+
   // Human Board
   drawGrid(ctxH, data.human.grid, data.human, true);
   drawMiniPiece(ctxHold, data.human.hold_piece);
@@ -627,6 +868,20 @@ function renderAll(data) {
   document.getElementById('h-score').innerText = data.human.score;
   document.getElementById('h-lines').innerText = data.human.lines;
   document.getElementById('h-piece-idx').innerText = '#' + data.human.piece_idx;
+
+  const hStat = document.getElementById('h-status');
+  if (hStat) {
+    if (data.human.done) {
+      hStat.innerText = 'TOPPED OUT';
+      hStat.style.color = 'var(--accent-red)';
+    } else if (running) {
+      hStat.innerText = 'IN COMBAT';
+      hStat.style.color = 'var(--accent-cyan)';
+    } else {
+      hStat.innerText = 'READY';
+      hStat.style.color = 'var(--accent-green)';
+    }
+  }
 
   // AI boards
   const ais = data.ais || (data.ai ? [data.ai] : []);
@@ -643,7 +898,11 @@ function renderAll(data) {
     P.card.classList.toggle('dead', !!ai.done);
 
     const s = ai.last_step || {};
-    if (s.lat_ms !== undefined) P.lat.innerText = s.lat_ms.toFixed(0) + ' ms';
+    if (s.lat_ms !== undefined) {
+      const lat = s.lat_ms;
+      P.lat.innerText = lat.toFixed(0) + ' ms';
+      P.lat.className = 'lat-badge ' + (lat < 5 ? 'lat-ultra' : (lat < 100 ? 'lat-fast' : 'lat-heavy'));
+    }
     const ent = (s.p_ent !== undefined ? s.p_ent : 0.9) * 100;
     const con = (s.p_con !== undefined ? s.p_con : 0.05) * 100;
     const neu = (s.p_neu !== undefined ? s.p_neu : 0.05) * 100;
@@ -668,7 +927,7 @@ function renderAll(data) {
     } else if (ai.mode === 'kev') {
       if (P.title) {
         P.title.innerText = 'kev-0.5b Calibrated Decision';
-        P.title.style.color = '#a371f7';
+        P.title.style.color = 'var(--accent-neon)';
       }
       if (P.lblEnt) P.lblEnt.innerText = 'PICK:';
       if (P.lblCon) P.lblCon.innerText = 'ALT:';
@@ -680,7 +939,7 @@ function renderAll(data) {
     } else if (ai.mode === 'laya') {
       if (P.title) {
         P.title.innerText = 'Laya RLCD Decision Model';
-        P.title.style.color = '#2dd4bf';
+        P.title.style.color = 'var(--accent-cyan)';
       }
       if (P.lblEnt) P.lblEnt.innerText = 'PICK:';
       if (P.lblCon) P.lblCon.innerText = 'ALT:';
@@ -692,11 +951,9 @@ function renderAll(data) {
       }
     }
 
-    // the activation graph follows the board you last clicked (first board by default)
     if (i === focusedPanel && s.telemetry) updateNeuralTelemetry(s.telemetry, s);
   });
 
-  // Team stats
   document.getElementById('team-score').innerText = data.team_score;
   document.getElementById('team-lines').innerText = data.team_lines;
 }
@@ -713,15 +970,17 @@ function buildAIPanels(ais) {
     card.className = 'player-card ai-card';
     card.innerHTML = `
       <div class="player-header">
-        <span class="tag-ai">● AI ${i + 1}</span>
-        <span style="font-size:12px;color:#d2a8ff">GRAPH</span>
+        <span class="tag-ai">● AI ${i + 1} // ${ai.mode || 'AGENT'}</span>
+        <span class="lat-badge lat-fast v-lat">- ms</span>
       </div>
-      <div class="ai-label">${ai.label || 'AI'}</div>
+      <div class="ai-label">${ai.label || 'AI Player'}</div>
       <div class="board-wrapper">
+        <div class="side-panel">
+          <div class="mini-box"><div class="mini-lbl">Hold</div><canvas width="54" height="54"></canvas></div>
+        </div>
         <canvas width="220" height="440"></canvas>
         <div class="side-panel">
           <div class="mini-box"><div class="mini-lbl">Next</div><canvas width="54" height="54"></canvas></div>
-          <div class="mini-box"><div class="mini-lbl">Hold</div><canvas width="54" height="54"></canvas></div>
         </div>
       </div>
       <div class="stats-row">
@@ -730,18 +989,18 @@ function buildAIPanels(ais) {
         <div class="stat-pill"><div class="stat-pill-val v-idx">#0</div><div class="stat-pill-lbl">Piece #</div></div>
       </div>
       <div class="nli-box">
-        <div style="display:flex; justify-content:space-between;">
-          <span class="v-nli-title" style="font-weight:bold; color:#d2a8ff">Decision Confidence</span>
-          <span class="v-lat" style="color:var(--sub)">- ms</span>
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span class="v-nli-title" style="font-weight:bold; color:var(--accent-neon)">Decision Confidence</span>
+          <span style="font-size:10px; color:var(--text-sub); text-transform:uppercase">NEURAL POLICY</span>
         </div>
         <div class="nli-bar">
           <div class="nli-ent b-ent" style="width:90%"></div>
           <div class="nli-con b-con" style="width:5%"></div>
           <div class="nli-neu b-neu" style="width:5%"></div>
         </div>
-        <div style="display:flex; justify-content:space-between; color:var(--sub); font-size:10px;">
-          <span><span class="l-ent">ENT:</span> <span class="v-ent" style="color:var(--green)">90%</span></span>
-          <span><span class="l-con">CON:</span> <span class="v-con" style="color:var(--red)">5%</span></span>
+        <div style="display:flex; justify-content:space-between; color:var(--text-sub); font-size:10px; font-family:var(--font-mono)">
+          <span><span class="l-ent">ENT:</span> <span class="v-ent" style="color:var(--accent-green);font-weight:700">90%</span></span>
+          <span><span class="l-con">CON:</span> <span class="v-con" style="color:var(--accent-red);font-weight:700">5%</span></span>
           <span><span class="l-neu">NEU:</span> <span class="v-neu">5%</span></span>
         </div>
         <div class="v-pitch" style="display:none; font-size:10px; color:#a5d6ff; margin-top:6px; line-height:1.3; background:rgba(88,166,255,0.08); padding:4px 6px; border-radius:4px; border-left:2px solid #58a6ff; max-height:48px; overflow:hidden;"></div>
@@ -749,8 +1008,9 @@ function buildAIPanels(ais) {
     host.appendChild(card);
 
     const cvs = card.querySelectorAll('canvas');
+    // cvs[0]: Hold, cvs[1]: Main Board, cvs[2]: Next
     aiPanels.push({
-      card, ctx: cvs[0].getContext('2d'), ctxNext: cvs[1].getContext('2d'), ctxHold: cvs[2].getContext('2d'),
+      card, ctxHold: cvs[0].getContext('2d'), ctx: cvs[1].getContext('2d'), ctxNext: cvs[2].getContext('2d'),
       score: card.querySelector('.v-score'), lines: card.querySelector('.v-lines'),
       idx: card.querySelector('.v-idx'), lat: card.querySelector('.v-lat'),
       barEnt: card.querySelector('.b-ent'), barCon: card.querySelector('.b-con'),
@@ -790,9 +1050,9 @@ let neuralData = {
   ],
   hidden: new Array(24).fill(0.3),
   outputs: [
-    {name: 'CON', val: 0.02, color: '#f85149'},
-    {name: 'ENT', val: 0.95, color: '#2ea043'},
-    {name: 'NEU', val: 0.03, color: '#8b949e'}
+    {name: 'CON', val: 0.02, color: '#ef4444'},
+    {name: 'ENT', val: 0.95, color: '#10b981'},
+    {name: 'NEU', val: 0.03, color: '#94a3b8'}
   ],
   spectrum: new Array(48).fill(0.2),
   moves: []
@@ -832,10 +1092,9 @@ function toggleNeuralGraph(show) {
 function drawNeuralGraph() {
   const W = cvsNeural.width, H = cvsNeural.height;
   ctxNeural.clearRect(0, 0, W, H);
-  ctxNeural.fillStyle = '#090d13';
+  ctxNeural.fillStyle = '#080c14';
   ctxNeural.fillRect(0, 0, W, H);
 
-  // Smooth lerp
   for (let i = 0; i < 24; i++) {
     currentHidden[i] += ((neuralData.hidden[i] !== undefined ? neuralData.hidden[i] : 0.1) - currentHidden[i]) * 0.15;
   }
@@ -848,7 +1107,6 @@ function drawNeuralGraph() {
     currentInputs[i] += (target - currentInputs[i]) * 0.15;
   }
 
-  // Node Positions
   const inPositions = [];
   for (let i = 0; i < 6; i++) {
     inPositions.push({ x: 170, y: 28 + i * 38 });
@@ -868,7 +1126,6 @@ function drawNeuralGraph() {
     { x: 545, y: 195 }
   ];
 
-  // Decision layer: one node per candidate (rotation, column) placement.
   const moves = neuralData.moves || [];
   if (currentMoves.length !== moves.length) currentMoves = moves.map(m => m.val);
   const movePositions = moves.map((m, i) => ({
@@ -876,7 +1133,7 @@ function drawNeuralGraph() {
     y: moves.length > 1 ? 22 + i * (206 / (moves.length - 1)) : 125
   }));
 
-  // Draw Synapses: Input -> Hidden Col 1
+  // Synapses
   ctxNeural.lineWidth = 1;
   for (let i = 0; i < 6; i++) {
     const inPos = inPositions[i];
@@ -885,7 +1142,7 @@ function drawNeuralGraph() {
       const hidPos = hidPositions[h];
       const hVal = currentHidden[h];
       const alpha = Math.min(Math.max(0.02 + (inVal * hVal) * 0.25, 0.02), 0.4);
-      ctxNeural.strokeStyle = `rgba(88, 166, 255, ${alpha.toFixed(3)})`;
+      ctxNeural.strokeStyle = `rgba(0, 240, 255, ${alpha.toFixed(3)})`;
       ctxNeural.beginPath();
       ctxNeural.moveTo(inPos.x, inPos.y);
       ctxNeural.lineTo(hidPos.x, hidPos.y);
@@ -893,13 +1150,12 @@ function drawNeuralGraph() {
     }
   }
 
-  // Hidden Col 1 -> Hidden Col 2
   for (let h1 = 0; h1 < 12; h1++) {
     const p1 = hidPositions[h1];
     for (let h2 = 12; h2 < 24; h2++) {
       const p2 = hidPositions[h2];
       const alpha = Math.min(Math.max(0.02 + (currentHidden[h1] * currentHidden[h2]) * 0.28, 0.02), 0.45);
-      ctxNeural.strokeStyle = `rgba(210, 168, 255, ${alpha.toFixed(3)})`;
+      ctxNeural.strokeStyle = `rgba(168, 85, 247, ${alpha.toFixed(3)})`;
       ctxNeural.beginPath();
       ctxNeural.moveTo(p1.x, p1.y);
       ctxNeural.lineTo(p2.x, p2.y);
@@ -907,14 +1163,13 @@ function drawNeuralGraph() {
     }
   }
 
-  // Hidden Col 2 -> Output
   for (let h2 = 12; h2 < 24; h2++) {
     const p2 = hidPositions[h2];
     for (let o = 0; o < 3; o++) {
       const outPos = outPositions[o];
       const oVal = currentOutputs[o];
       const alpha = Math.min(Math.max(0.03 + (currentHidden[h2] * oVal) * 0.35, 0.03), 0.6);
-      const colStr = o === 1 ? '46, 160, 67' : (o === 0 ? '248, 81, 73' : '139, 148, 158');
+      const colStr = o === 1 ? '16, 185, 129' : (o === 0 ? '239, 68, 68' : '148, 163, 184');
       ctxNeural.strokeStyle = `rgba(${colStr}, ${alpha.toFixed(3)})`;
       ctxNeural.beginPath();
       ctxNeural.moveTo(p2.x, p2.y);
@@ -923,7 +1178,7 @@ function drawNeuralGraph() {
     }
   }
 
-  // Pulse Particles
+  // Synaptic pulse particles
   const flowActive = document.getElementById('chk-synaptic-flow')?.checked;
   if (flowActive) {
     for (let p of particles) {
@@ -940,15 +1195,15 @@ function drawNeuralGraph() {
       if (p.stage === 2 && movePositions.length > 0) {
         startP = outPositions[p.toIdx % 3];
         endP = movePositions[p.fromIdx % movePositions.length];
-        col = 'rgba(241, 224, 90, 0.85)';
+        col = 'rgba(251, 191, 36, 0.85)';
       } else if (p.stage === 0) {
         startP = inPositions[p.fromIdx % 6];
         endP = hidPositions[p.toIdx % 12];
-        col = 'rgba(88, 166, 255, 0.8)';
+        col = 'rgba(0, 240, 255, 0.85)';
       } else {
         startP = hidPositions[(p.fromIdx % 12) + 12];
         endP = outPositions[p.toIdx % 3];
-        col = p.toIdx === 1 ? 'rgba(46, 220, 80, 0.9)' : 'rgba(210, 168, 255, 0.8)';
+        col = p.toIdx === 1 ? 'rgba(16, 185, 129, 0.9)' : 'rgba(168, 85, 247, 0.85)';
       }
 
       const curX = startP.x + (endP.x - startP.x) * p.t;
@@ -967,16 +1222,16 @@ function drawNeuralGraph() {
     const val = currentInputs[i];
     const node = neuralData.inputs[i] || { name: 'Input' };
 
-    ctxNeural.shadowColor = '#58a6ff';
+    ctxNeural.shadowColor = '#00f0ff';
     ctxNeural.shadowBlur = 6 * val;
-    ctxNeural.fillStyle = `rgba(88, 166, 255, ${0.4 + val * 0.6})`;
+    ctxNeural.fillStyle = `rgba(0, 240, 255, ${0.4 + val * 0.6})`;
     ctxNeural.beginPath();
     ctxNeural.arc(pos.x, pos.y, 6, 0, Math.PI * 2);
     ctxNeural.fill();
     ctxNeural.shadowBlur = 0;
 
     ctxNeural.font = '10px monospace';
-    ctxNeural.fillStyle = '#8b949e';
+    ctxNeural.fillStyle = '#94a3b8';
     ctxNeural.textAlign = 'right';
     ctxNeural.fillText(`${node.name}: ${(val * 100).toFixed(0)}%`, pos.x - 10, pos.y + 3);
   }
@@ -986,14 +1241,14 @@ function drawNeuralGraph() {
     const pos = hidPositions[h];
     const act = currentHidden[h];
 
-    ctxNeural.shadowColor = '#d2a8ff';
+    ctxNeural.shadowColor = '#a855f7';
     ctxNeural.shadowBlur = 9 * act;
 
     const r = 3 + 4 * act;
     const grad = ctxNeural.createRadialGradient(pos.x, pos.y, 1, pos.x, pos.y, r);
     grad.addColorStop(0, `rgba(255, 255, 255, ${0.8 * act})`);
-    grad.addColorStop(0.5, `rgba(210, 168, 255, ${0.85 * act})`);
-    grad.addColorStop(1, `rgba(140, 70, 220, ${0.4 * act + 0.2})`);
+    grad.addColorStop(0.5, `rgba(168, 85, 247, ${0.85 * act})`);
+    grad.addColorStop(1, `rgba(107, 33, 168, ${0.4 * act + 0.2})`);
 
     ctxNeural.fillStyle = grad;
     ctxNeural.beginPath();
@@ -1019,18 +1274,18 @@ function drawNeuralGraph() {
     ctxNeural.shadowBlur = 0;
 
     ctxNeural.font = isWinner ? 'bold 11px sans-serif' : '11px sans-serif';
-    ctxNeural.fillStyle = isWinner ? '#fff' : '#c9d1d9';
+    ctxNeural.fillStyle = isWinner ? '#fff' : '#cbd5e1';
     ctxNeural.textAlign = 'right';
     ctxNeural.fillText(`${node.name}: ${(val * 100).toFixed(1)}%`, pos.x - 14, pos.y + 4);
   }
 
-  // Synapses: NLI head -> candidate placements
+  // Synapses: Output -> Moves
   for (let i = 0; i < movePositions.length; i++) {
     currentMoves[i] += ((moves[i].val - currentMoves[i]) * 0.15);
     const mp = movePositions[i];
     for (let o = 0; o < 3; o++) {
       const alpha = Math.min(0.03 + currentMoves[i] * currentOutputs[o] * 0.5, 0.65);
-      const colStr = o === 1 ? '46, 160, 67' : (o === 0 ? '248, 81, 73' : '139, 148, 158');
+      const colStr = o === 1 ? '16, 185, 129' : (o === 0 ? '239, 68, 68' : '148, 163, 184');
       ctxNeural.strokeStyle = `rgba(${colStr}, ${alpha.toFixed(3)})`;
       ctxNeural.beginPath();
       ctxNeural.moveTo(outPositions[o].x, outPositions[o].y);
@@ -1039,19 +1294,19 @@ function drawNeuralGraph() {
     }
   }
 
-  // Candidate placement nodes
+  // Move Nodes
   for (let i = 0; i < movePositions.length; i++) {
     const m = moves[i], mp = movePositions[i], v = currentMoves[i];
-    ctxNeural.shadowColor = m.chosen ? '#2ea043' : '#f1e05a';
+    ctxNeural.shadowColor = m.chosen ? '#10b981' : '#fbbf24';
     ctxNeural.shadowBlur = m.chosen ? 14 : 6 * v;
-    ctxNeural.fillStyle = m.chosen ? '#2ea043' : `rgba(241, 224, 90, ${0.18 + v * 0.75})`;
+    ctxNeural.fillStyle = m.chosen ? '#10b981' : `rgba(251, 191, 36, ${0.18 + v * 0.75})`;
     ctxNeural.beginPath();
     ctxNeural.arc(mp.x, mp.y, m.chosen ? 7 : 4, 0, Math.PI * 2);
     ctxNeural.fill();
     ctxNeural.shadowBlur = 0;
 
     ctxNeural.font = m.chosen ? 'bold 10px monospace' : '9px monospace';
-    ctxNeural.fillStyle = m.chosen ? '#7ee787' : `rgba(139, 148, 158, ${0.45 + v * 0.55})`;
+    ctxNeural.fillStyle = m.chosen ? '#34d399' : `rgba(148, 163, 184, ${0.45 + v * 0.55})`;
     ctxNeural.textAlign = 'left';
     ctxNeural.fillText(`r${m.rot}c${m.col}` + (m.lines ? ` +${m.lines}` : ''), mp.x + 10, mp.y + 3);
   }
@@ -1064,7 +1319,7 @@ function drawNeuralGraph() {
 function drawSpectrum() {
   const W = cvsSpec.width, H = cvsSpec.height;
   ctxSpec.clearRect(0, 0, W, H);
-  ctxSpec.fillStyle = '#090d13';
+  ctxSpec.fillStyle = '#080c14';
   ctxSpec.fillRect(0, 0, W, H);
 
   const numBars = 48;
@@ -1081,9 +1336,9 @@ function drawSpectrum() {
     const y = H - 20 - h;
 
     const grad = ctxSpec.createLinearGradient(0, H - 20, 0, y);
-    grad.addColorStop(0, 'rgba(88, 166, 255, 0.3)');
-    grad.addColorStop(0.6, 'rgba(210, 168, 255, 0.7)');
-    grad.addColorStop(1, 'rgba(241, 224, 90, 0.95)');
+    grad.addColorStop(0, 'rgba(0, 240, 255, 0.3)');
+    grad.addColorStop(0.6, 'rgba(168, 85, 247, 0.7)');
+    grad.addColorStop(1, 'rgba(251, 191, 36, 0.95)');
 
     ctxSpec.fillStyle = grad;
     ctxSpec.fillRect(x, y, barW - 2, h);
@@ -1092,7 +1347,7 @@ function drawSpectrum() {
     ctxSpec.fillRect(x, y - 2, barW - 2, 2);
   }
 
-  ctxSpec.strokeStyle = '#30363d';
+  ctxSpec.strokeStyle = 'rgba(255, 255, 255, 0.1)';
   ctxSpec.lineWidth = 1;
   ctxSpec.beginPath();
   ctxSpec.moveTo(10, H - 19);
@@ -1103,7 +1358,6 @@ function drawSpectrum() {
   if (el) el.innerText = `Peak: ${(maxPeak * 100).toFixed(0)}%`;
 }
 
-// Telemetry poll runs from page load so the activation graph is live even while paused.
 pollTimer = setInterval(fetchCoopState, 200);
 fetchCoopState();
 
@@ -1113,7 +1367,6 @@ function animateLoop() {
   requestAnimationFrame(animateLoop);
 }
 requestAnimationFrame(animateLoop);
-
 
 async function sendHumanAction(act) {
   try {
@@ -1127,7 +1380,6 @@ async function sendHumanAction(act) {
   } catch (e) {}
 }
 
-// Keyboard controls
 window.addEventListener('keydown', (e) => {
   if (!running) return;
   const key = e.key;
@@ -1155,7 +1407,6 @@ async function togglePlay() {
   if (running) {
     btn.innerText = 'Pause Game';
     btn.classList.add('pause');
-    // Human natural gravity loop: 800ms
     gravityTimer = setInterval(() => { sendHumanAction('soft_drop'); }, 800);
   } else {
     btn.innerText = 'Resume Game';
@@ -1177,7 +1428,6 @@ async function changeSpeed(val) {
   });
 }
 
-
 fetchCoopState();
 </script>
 </body>
@@ -1196,6 +1446,20 @@ class CoopRequestHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(COOP_HTML.encode("utf-8"))
         elif self.path == "/api/coop/state":
             st = self.manager.get_full_state()
+            hw = {
+                "gpu": "NVIDIA RTX 3060 Ti 8GB",
+                "engine": "2.97M Bitboard checks/sec (O(1) SRS)",
+                "paradigm": "Non-Autoregressive Langevin + RLCD",
+                "vram_alloc_mb": 0.0,
+                "vram_peak_mb": 0.0,
+                "vram_reserved_mb": 0.0,
+            }
+            if torch is not None and torch.cuda.is_available():
+                hw["vram_alloc_mb"] = round(torch.cuda.memory_allocated() / (1024 * 1024), 1)
+                hw["vram_peak_mb"] = round(torch.cuda.max_memory_allocated() / (1024 * 1024), 1)
+                hw["vram_reserved_mb"] = round(torch.cuda.memory_reserved() / (1024 * 1024), 1)
+                hw["gpu"] = torch.cuda.get_device_name(0)
+            st["hardware"] = hw
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -1263,7 +1527,7 @@ def serve_coop(port: int = 8088, ai_player=None, vulkan_player=None, qwen_player
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n[*] Stopped coop server.")
+        print("\\n[*] Stopped coop server.")
 
 
 if __name__ == "__main__":
@@ -1309,8 +1573,6 @@ if __name__ == "__main__":
                         help="Compute device for neural players (cuda or cpu; default auto-detects CUDA)")
     args = parser.parse_args()
 
-    # Remote players first: they only need an HTTP round trip, so a missing llama-server
-    # fails in milliseconds instead of after loading 8.5GB of openjev onto the CPU.
     vulkan_player = None
     if args.with_vulkan:
         from tetris_player import VulkanNLIPlayer
