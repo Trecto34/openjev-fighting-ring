@@ -965,13 +965,15 @@ class ChessGameManager:
             time.sleep(0.02)
             with self.cond:
                 now = time.monotonic()
-                if self.running and not self.game_over and self.time_control > 0:
-                    turn_key = "w" if self.board.turn == chess.WHITE else "b"
-                    dt = now - self._last_clock_tick
+                dt = now - self._last_clock_tick
+                self._last_clock_tick = now
+                p = self._pending
+                if (self.running and not self.game_over and self.time_control > 0
+                        and p is not None and p.started and not p.ready):
+                    turn_key = p.color
                     self.clocks[turn_key] = max(0.0, self.clocks[turn_key] - dt)
                     if self.clocks[turn_key] <= 0.0:
                         self._finish("timeout", "b" if turn_key == "w" else "w")
-                self._last_clock_tick = now
                 self._pump_locked()
 
     def _pump_locked(self) -> None:
@@ -1260,8 +1262,9 @@ class ChessGameManager:
             },
             "time_control": self.time_control,
             "active_clock": (
-                ("w" if board.turn == chess.WHITE else "b")
-                if self.running and not self.game_over and self.time_control > 0
+                self._pending.color
+                if (self.running and not self.game_over and self.time_control > 0
+                    and self._pending is not None and self._pending.started and not self._pending.ready)
                 else None
             ),
             "evaluation": eval_cp,
