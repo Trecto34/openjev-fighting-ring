@@ -887,13 +887,20 @@ class ChessGameManager:
     """
 
     def __init__(self, white_type: str = "minimax", black_type: str = "heuristic",
-                 depth: int = 3, tempo: float = 0.25, seed: Optional[int] = None):
+                 depth: int = 3, tempo: float = 0.25, seed: Optional[int] = None,
+                 time_control: int = 300):
         self.cond = threading.Condition()
         self.rng = random.Random(seed)
         self.white_type = white_type.lower()
         self.black_type = black_type.lower()
         self.depth = max(1, min(6, int(depth)))
         self.tempo = max(0.02, min(5.0, float(tempo)))
+        self.time_control = max(0, int(time_control))
+        self.clocks = {
+            "w": float(self.time_control if self.time_control > 0 else 0.0),
+            "b": float(self.time_control if self.time_control > 0 else 0.0),
+        }
+        self._last_clock_tick = time.monotonic()
         self.running = False
         self.game_over = False
         self.result: Optional[Dict] = None
@@ -953,10 +960,18 @@ class ChessGameManager:
                 self.cond.notify_all()
 
     def _orchestrator(self) -> None:
-        """Loop thread: periodically pumps the decision queue under the lock."""
+        """Loop thread: periodically pumps the decision queue and ticks chess clocks."""
         while True:
-            time.sleep(0.01)
+            time.sleep(0.02)
             with self.cond:
+                now = time.monotonic()
+                if self.running and not self.game_over and self.time_control > 0:
+                    turn_key = "w" if self.board.turn == chess.WHITE else "b"
+                    dt = now - self._last_clock_tick
+                    self.clocks[turn_key] = max(0.0, self.clocks[turn_key] - dt)
+                    if self.clocks[turn_key] <= 0.0:
+                        self._finish("timeout", "b" if turn_key == "w" else "w")
+                self._last_clock_tick = now
                 self._pump_locked()
 
     def _pump_locked(self) -> None:
@@ -989,6 +1004,8 @@ class ChessGameManager:
         self.cond.notify_all()
 
     def _commit_locked(self, dec: _Decision) -> None:
+        if self.game_over:
+            return
         color = dec.color
         self._exec_count += 1
         self.think_ms[color] += dec.thinking_ms
@@ -1024,7 +1041,11 @@ class ChessGameManager:
     def _finish(self, reason: str, winner: Optional[str] = None) -> None:
         color_names = {"w": "WHITE", "b": "BLACK"}
         winner_name = color_names.get(winner)
-        label = f"{reason.replace('_', ' ').title()} — {winner_name + ' wins' if winner else 'Draw'}"
+        if reason == "timeout":
+            flagged_side = "White" if winner == "b" else "Black"
+            label = f"Timeout — {winner_name} wins on time ({flagged_side} flagged)"
+        else:
+            label = f"{reason.replace('_', ' ').title()} — {winner_name + ' wins' if winner else 'Draw'}"
         self.result = {
             "type": reason,
             "winner": winner,
@@ -1078,6 +1099,7 @@ class ChessGameManager:
         with self.cond:
             self.running = not self.running
             self._last_step = time.monotonic()
+            self._last_clock_tick = time.monotonic()
             self.cond.notify_all()
             return self.running
 
@@ -1095,6 +1117,11 @@ class ChessGameManager:
         self.think_ms = {"w": 0.0, "b": 0.0}
         self.last_think_ms = {"w": 0.0, "b": 0.0}
         self._exec_count = 0
+        self.clocks = {
+            "w": float(self.time_control if self.time_control > 0 else 0.0),
+            "b": float(self.time_control if self.time_control > 0 else 0.0),
+        }
+        self._last_clock_tick = time.monotonic()
         self.game_over = False
         self.result = None
         for player in (self.white, self.black):
@@ -1120,6 +1147,11 @@ class ChessGameManager:
                         player.depth = self.depth
             if "tempo" in data:
                 self.tempo = max(0.02, min(5.0, float(data["tempo"])))
+            if "time_control" in data:
+                tc = max(0, int(data["time_control"]))
+                if tc != self.time_control:
+                    self.time_control = tc
+                    self.clocks = {"w": float(tc), "b": float(tc)}
             self.cond.notify_all()
 
     # ------------------------------------------------------------------ state
@@ -1211,6 +1243,7 @@ class ChessGameManager:
                 "black": self.black_type,
                 "depth": self.depth,
                 "tempo": round(self.tempo, 2),
+                "time_control": self.time_control,
                 "available": PLAYER_TYPES,
                 "roster": [
                     {"name": spec.name, "label": spec.label,
@@ -1221,6 +1254,16 @@ class ChessGameManager:
             "running": self.running,
             "game_over": self.game_over,
             "result": self.result,
+            "clocks": {
+                "w": round(self.clocks["w"], 2),
+                "b": round(self.clocks["b"], 2),
+            },
+            "time_control": self.time_control,
+            "active_clock": (
+                ("w" if board.turn == chess.WHITE else "b")
+                if self.running and not self.game_over and self.time_control > 0
+                else None
+            ),
             "evaluation": eval_cp,
             "evaluation_mate": abs(eval_cp) > MATE // 2,
             "material": counts,
