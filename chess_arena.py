@@ -852,8 +852,78 @@ PLAYER_REGISTRY: Dict[str, PlayerSpec] = {
         factory=lambda ctx: KEVPlayer(seed=ctx.seed),
     ),
 }
-
+ 
 PLAYER_TYPES: List[str] = list(PLAYER_REGISTRY)
+
+
+def generate_random_board(rng: Optional[random.Random] = None) -> chess.Board:
+    """Generate a valid, non-terminal, asymmetric chaotic chess position.
+
+    Kings are guaranteed placed on non-adjacent squares. Both sides receive a
+    random assortment and count of pieces (from bare king up to an armada of
+    queens/rooks/knights). Pawns are never placed on back ranks.
+    """
+    if rng is None:
+        rng = random.Random()
+    piece_pool = [chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN]
+    piece_weights = [0.35, 0.22, 0.20, 0.15, 0.08]
+
+    for _ in range(500):
+        b = chess.Board(None)
+        squares = list(range(64))
+        rng.shuffle(squares)
+
+        # Place kings on non-adjacent squares
+        wk_sq = squares.pop()
+        bk_sq = None
+        for i, sq in enumerate(squares):
+            if chess.square_distance(wk_sq, sq) > 1:
+                bk_sq = squares.pop(i)
+                break
+        if bk_sq is None:
+            continue
+
+        b.set_piece_at(wk_sq, chess.Piece(chess.KING, chess.WHITE))
+        b.set_piece_at(bk_sq, chess.Piece(chess.KING, chess.BLACK))
+
+        # Asymmetric piece count: can be wild handicap or balanced chaos
+        n_white = rng.randint(0, 14)
+        n_black = rng.randint(0, 14)
+
+        for _ in range(n_white):
+            if not squares:
+                break
+            ptype = rng.choices(piece_pool, weights=piece_weights)[0]
+            sq_candidates = [s for s in squares if ptype != chess.PAWN or (chess.square_rank(s) not in (0, 7))]
+            if not sq_candidates:
+                continue
+            chosen_sq = rng.choice(sq_candidates)
+            squares.remove(chosen_sq)
+            b.set_piece_at(chosen_sq, chess.Piece(ptype, chess.WHITE))
+
+        for _ in range(n_black):
+            if not squares:
+                break
+            ptype = rng.choices(piece_pool, weights=piece_weights)[0]
+            sq_candidates = [s for s in squares if ptype != chess.PAWN or (chess.square_rank(s) not in (0, 7))]
+            if not sq_candidates:
+                continue
+            chosen_sq = rng.choice(sq_candidates)
+            squares.remove(chosen_sq)
+            b.set_piece_at(chosen_sq, chess.Piece(ptype, chess.BLACK))
+
+        b.turn = rng.choice([chess.WHITE, chess.BLACK])
+        # Inactive king must not be in check
+        inactive_king = b.king(not b.turn)
+        if inactive_king is not None and b.is_attacked_by(b.turn, inactive_king):
+            b.turn = not b.turn
+            if b.is_attacked_by(not b.turn, b.king(b.turn)):
+                continue
+
+        if b.is_valid() and not b.is_game_over() and b.legal_moves.count() > 0:
+            return b
+
+    return chess.Board()
 
 
 @dataclass
@@ -905,6 +975,8 @@ class ChessGameManager:
         self.game_over = False
         self.result: Optional[Dict] = None
         self.board = chess.Board()
+        self.board_mode = "standard"
+        self._initial_counts = _material_counts(self.board)
         self.move_log: List[Dict] = []
         self.think_ms = {"w": 0.0, "b": 0.0}
         self.last_think_ms = {"w": 0.0, "b": 0.0}
@@ -1115,6 +1187,8 @@ class ChessGameManager:
         self._force = False
         self._gen += 1
         self.board = chess.Board()
+        self.board_mode = "standard"
+        self._initial_counts = _material_counts(self.board)
         self.move_log.clear()
         self.think_ms = {"w": 0.0, "b": 0.0}
         self.last_think_ms = {"w": 0.0, "b": 0.0}
@@ -1129,6 +1203,31 @@ class ChessGameManager:
         for player in (self.white, self.black):
             if player is not None:
                 player.reset()
+
+    def randomize(self) -> Dict:
+        with self.cond:
+            self._pending = None
+            self._force = False
+            self._gen += 1
+            self.board = generate_random_board(self.rng)
+            self.board_mode = "asymmetric_chaos"
+            self._initial_counts = _material_counts(self.board)
+            self.move_log.clear()
+            self.think_ms = {"w": 0.0, "b": 0.0}
+            self.last_think_ms = {"w": 0.0, "b": 0.0}
+            self._exec_count = 0
+            self.clocks = {
+                "w": float(self.time_control if self.time_control > 0 else 0.0),
+                "b": float(self.time_control if self.time_control > 0 else 0.0),
+            }
+            self._last_clock_tick = time.monotonic()
+            self.game_over = False
+            self.result = None
+            for player in (self.white, self.black):
+                if player is not None:
+                    player.reset()
+            self.cond.notify_all()
+            return self._state_locked()
 
     def set_config(self, data: Dict) -> None:
         with self.cond:
@@ -1199,12 +1298,14 @@ class ChessGameManager:
 
         eval_cp = evaluate(board)
         counts = _material_counts(board)
-        start_set = {"P": 8, "N": 2, "B": 2, "R": 2, "Q": 1}
+        init = getattr(self, "_initial_counts", None) or _material_counts(chess.Board())
         captured = {}
         for side in ("w", "b"):
             missing = []
-            for piece_type, start in start_set.items():
-                for _ in range(start - counts[side].get(piece_type, 0)):
+            for piece_type in ("Q", "R", "B", "N", "P"):
+                start_n = init[side].get(piece_type, 0)
+                curr_n = counts[side].get(piece_type, 0)
+                for _ in range(max(0, start_n - curr_n)):
                     missing.append(piece_type.lower() if side == "b" else piece_type)
             captured["b" if side == "w" else "w"] = missing
 
@@ -1274,6 +1375,7 @@ class ChessGameManager:
             "history": list(self.move_log),
             "pgn": self._build_pgn(),
             "total_nodes": sum(getattr(p, "last_nodes", 0) for p in (self.white, self.black)),
+            "board_mode": self.board_mode,
         }
 
 

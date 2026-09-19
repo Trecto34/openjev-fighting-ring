@@ -415,6 +415,7 @@ CHESS_HTML_TEMPLATE = """<!DOCTYPE html>
         <button class="btn btn-run" id="btn-run">RUN</button>
         <button class="btn btn-ghost" id="btn-step">STEP</button>
         <button class="btn btn-ghost" id="btn-reset">RESET</button>
+        <button class="btn btn-ghost" id="btn-random" title="Create an unprecedented, asymmetric board never seen before">RANDOMIZE</button>
         <div class="config">
           <div class="field"><label>White</label>
             <select id="cfg-white"></select>
@@ -661,6 +662,14 @@ function render(s) {
   if (s.game_over) { sysTxt.innerText = 'COMPLETE'; }
   else { sysTxt.innerText = s.running ? 'LIVE // AUTO' : 'PAUSED // MANUAL'; }
 
+  const tagEl = document.querySelector('.board-tag');
+  if (tagEl) {
+    tagEl.innerText = (s.board_mode === 'asymmetric_chaos')
+      ? '⚡ ASYMMETRIC CHAOS // UNSEEN'
+      : '8 × 8 MONOCHROME MATRIX';
+    tagEl.style.color = (s.board_mode === 'asymmetric_chaos') ? 'var(--paper)' : 'var(--slate)';
+  }
+
   // gauge
   const cp = s.evaluation;
   const cpP = (s.evaluation_mate ? (cp > 0 ? 100 : 0) : Math.max(1.5, Math.min(98.5, 50 + (cp / 100) * 8)));
@@ -810,6 +819,10 @@ function setup() {
     overlayHidden = false;
     doPost('/api/chess/reset').then(function () { renderedPlies = -1; fetchState(); });
   });
+  document.getElementById('btn-random').addEventListener('click', function () {
+    overlayHidden = false;
+    doPost('/api/chess/randomize').then(function () { renderedPlies = -1; fetchState(); });
+  });
 
   const tempo = document.getElementById('cfg-tempo');
   tempo.addEventListener('input', function () {
@@ -889,6 +902,9 @@ class ChessRequestHandler(http.server.BaseHTTPRequestHandler):
             self._send_json({"running": running})
         elif path == "/api/chess/reset":
             self.manager.reset()
+            self._send_json(self.manager.get_state())
+        elif path == "/api/chess/randomize":
+            self.manager.randomize()
             self._send_json(self.manager.get_state())
         elif path == "/api/chess/config":
             self.manager.set_config(data)
