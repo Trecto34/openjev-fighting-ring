@@ -347,10 +347,14 @@ CHESS_HTML = """<!DOCTYPE html>
   </section>
 </div>
 
-<div class="result-overlay" id="overlay">
+<div class="result-overlay" id="overlay" onclick="if(event.target===this) dismissOverlay();">
   <div class="result-card">
     <h2 id="ov-title">CHECKMATE</h2>
     <p id="ov-sub">--</p>
+    <div style="display:flex; gap:12px; justify-content:center; margin-top:20px;">
+      <button class="btn" style="background:var(--accent-cyan); color:#000;" onclick="doPost('/api/chess/reset').then(() => { overlayDismissed=false; fetchState(); });">PLAY AGAIN</button>
+      <button class="btn ghost" onclick="dismissOverlay();">REVIEW BOARD</button>
+    </div>
   </div>
 </div>
 
@@ -358,7 +362,13 @@ CHESS_HTML = """<!DOCTYPE html>
 const GLYPH = {P:'♟',N:'♞',B:'♝',R:'♜',Q:'♛',K:'♚',p:'♟',n:'♞',b:'♝',r:'♜',q:'♛',k:'♚'};
 let running = false;
 let renderedPlies = -1;
+let overlayDismissed = false;
 const cells = [];
+
+function dismissOverlay() {
+  overlayDismissed = true;
+  document.getElementById('overlay').classList.remove('show');
+}
 
 function buildBoard() {
   const grid = document.getElementById('board');
@@ -463,12 +473,15 @@ function render(state) {
   live.classList.toggle('on', !!state.running);
   document.getElementById('live-txt').innerText = state.running ? 'LIVE' : 'PAUSED';
 
-  if (state.result) {
+  if (state.result && state.game_over) {
     document.getElementById('ov-title').innerText =
       state.result.winner_name ? (state.result.winner_name + ' VICTORY') : 'DRAW';
     document.getElementById('ov-sub').innerText = state.result.label;
-    document.getElementById('overlay').classList.add('show');
+    if (!overlayDismissed) {
+      document.getElementById('overlay').classList.add('show');
+    }
   } else {
+    overlayDismissed = false;
     document.getElementById('overlay').classList.remove('show');
   }
 }
@@ -538,8 +551,11 @@ function setupButtons() {
     runBtn.classList.toggle('pause', running);
     fetchState();
   });
-  document.getElementById('btn-step').addEventListener('click', () => doPost('/api/chess/step'));
-  document.getElementById('btn-reset').addEventListener('click', () => doPost('/api/chess/reset'));
+  document.getElementById('btn-step').addEventListener('click', () => doPost('/api/chess/step').then(fetchState));
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    overlayDismissed = false;
+    doPost('/api/chess/reset').then(fetchState);
+  });
 
   const tempo = document.getElementById('cfg-tempo');
   tempo.addEventListener('input', () => {
@@ -621,7 +637,7 @@ def serve_chess(port: int = 8089, white: str = "minimax", black: str = "heuristi
                 depth: int = 3, tempo: float = 0.25, seed=None):
     manager = ChessGameManager(white_type=white, black_type=black,
                                depth=depth, tempo=tempo, seed=seed)
-    manager.toggle()
+    # Start paused at initial board state. User can click RUN or STEP to begin.
     ChessRequestHandler.manager = manager
     socketserver.TCPServer.allow_reuse_address = True
     server = http.server.ThreadingHTTPServer(("0.0.0.0", port), ChessRequestHandler)
