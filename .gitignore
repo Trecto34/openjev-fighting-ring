@@ -1,0 +1,23 @@
+# Virtual environment
+.venv/
+env/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# HuggingFace & Torch caches
+.cache/
+hf_cache/
+
+# Runtime logs
+*.log
+/tmp/
+
+# OS and IDE
+.DS_Store
+.vscode/
+.idea/
